@@ -1,135 +1,335 @@
 // app/index.js
-import { View, Text, TouchableOpacity, Image } from 'react-native';
-import React, { useEffect } from 'react';
+import { View, Text, TouchableOpacity, Animated, ScrollView, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
-import NfcManager from 'react-native-nfc-manager';
 import { MaterialIcons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native';
+import { colors } from '../styles/globalStyles';
+import DeviceInfo from 'react-native-device-info';
+import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 
 export default function Home() {
      const router = useRouter();
+     const fadeAnim = useRef(new Animated.Value(0)).current;
+     const slideAnim = useRef(new Animated.Value(30)).current;
+     const [deviceInfo, setDeviceInfo] = useState(null);
+     const [nfcStatus, setNfcStatus] = useState({
+          isSupported: false,
+          technologies: [],
+     });
 
      useEffect(() => {
-          const checkNfc = async () => {
+          Animated.parallel([
+               Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 1000,
+                    useNativeDriver: true,
+               }),
+               Animated.timing(slideAnim, {
+                    toValue: 0,
+                    duration: 800,
+                    useNativeDriver: true,
+               }),
+          ]).start();
 
-               try {
-
-                    await NfcManager.requestTechnology(NfcTech.Ndef);
-console.log(`NFC OK!`);
-               }
-               catch (ex) {
-                    console.warn(ex);
-
-               }
-               /*       const supported = await NfcManager.isSupported();
-                     if (supported) {
-                          await NfcManager.start();
-                     } else {
-                          alert('NFC is not supported on this device');
-                     } */
+          // Get device information
+          const getDeviceInfo = async () => {
+               const info = {
+                    model: await DeviceInfo.getModel(),
+                    systemVersion: DeviceInfo.getSystemVersion(),
+                    brand: await DeviceInfo.getBrand(),
+                    buildNumber: await DeviceInfo.getBuildNumber(),
+                    apiLevel: await DeviceInfo.getApiLevel(),
+               };
+               setDeviceInfo(info);
           };
 
-          checkNfc();
+          // In the checkNfcCapabilities function, change this part:
+          const checkNfcCapabilities = async () => {
+               try {
+                    const isSupported = await NfcManager.isSupported();
+                    if (isSupported) {
+                         await NfcManager.start();
+
+                         // For Android, we can check specific technologies
+                         if (Platform.OS === 'android') {
+                              const techs = [];
+                              // These are the common NFC technologies available on Android
+                              const techCheckList = [
+                                   'NfcA', 'NfcB', 'NfcF', 'NfcV', 'IsoDep', 'MifareClassic',
+                                   'MifareUltralight', 'Ndef'
+                              ];
+
+                              // Get the tech list that this device supports
+                              const supportedTechs = await NfcManager.getLaunchTagEvent();
+                              if (supportedTechs) {
+                                   techCheckList.forEach(tech => {
+                                        if (supportedTechs.includes(tech)) {
+                                             techs.push(tech);
+                                        }
+                                   });
+                              }
+
+                              setNfcStatus({
+                                   isSupported: true,
+                                   technologies: techs,
+                              });
+                         } else {
+                              // For iOS, we can't check specific technologies this way
+                              setNfcStatus({
+                                   isSupported: true,
+                                   technologies: ['NDEF'], // iOS mainly supports NDEF
+                              });
+                         }
+                    } else {
+                         setNfcStatus({
+                              isSupported: false,
+                              technologies: [],
+                         });
+                    }
+               } catch (ex) {
+                    console.warn('Error checking NFC capabilities:', ex);
+                    setNfcStatus({
+                         isSupported: false,
+                         technologies: [],
+                    });
+               }
+          };
+
+          if (Platform.OS === 'android') {
+               getDeviceInfo();
+          }
+          checkNfcCapabilities();
+
+          return () => {
+               // Cleanup NFC
+               NfcManager.stop();
+          };
      }, []);
 
+     const Feature = ({ icon, title, subtitle, color, onPress }) => {
+          return (
+               <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+                    <Animated.View style={[styles.featureCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                         <View style={[styles.iconContainer, { backgroundColor: color + '20' }]}>
+                              <MaterialIcons name={icon} size={28} color={color} />
+                         </View>
+                         <View style={styles.featureContent}>
+                              <Text style={styles.featureTitle}>{title}</Text>
+                              <Text style={styles.featureSubtitle}>{subtitle}</Text>
+                         </View>
+                         <MaterialIcons name="chevron-right" size={24} color="rgba(255,255,255,0.5)" />
+                    </Animated.View>
+               </TouchableOpacity>
+          );
+     };
+
+     const InfoCard = ({ title, items }) => (
+          <Animated.View
+               style={[
+                    styles.infoCard,
+                    { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }
+               ]}
+          >
+               <Text style={styles.infoCardTitle}>{title}</Text>
+               {items.map((item, index) => (
+                    <View key={index} style={styles.infoRow}>
+                         <Text style={styles.infoLabel}>{item.label}</Text>
+                         <Text style={styles.infoValue}>{item.value}</Text>
+                    </View>
+               ))}
+          </Animated.View>
+     );
+
      return (
-          <View style={styles.container}>
-               <View style={styles.header}>
-                    <MaterialIcons name="lock" size={50} color="#2196F3" />
-                    <Text style={styles.title}>Smart Locker</Text>
-                    <Text style={styles.subtitle}>NFC Management System</Text>
-               </View>
+          <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+               <Animated.View style={[styles.header, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+                    <View style={styles.logoContainer}>
+                         <MaterialIcons name="lock" size={40} color={colors.purple} />
+                    </View>
+                    <Text style={styles.title}>NFC Locker</Text>
+                    <Text style={styles.subtitle}>Secure Access Management</Text>
+               </Animated.View>
 
-               <View style={styles.buttonContainer}>
-                    <TouchableOpacity
-                         style={[styles.button, styles.readButton]}
-                         onPress={() => router.push('/read')}
-                    >
-                         <MaterialIcons name="nfc" size={30} color="white" />
-                         <Text style={styles.buttonText}>Read NFC Tag</Text>
-                         <Text style={styles.buttonDescription}>Scan and read NFC tag data</Text>
-                    </TouchableOpacity>
+               <Text style={styles.sectionTitle}>Quick Actions</Text>
 
-                    <TouchableOpacity
-                         style={[styles.button, styles.writeButton]}
-                         onPress={() => router.push('/write')}
-                    >
-                         <MaterialIcons name="edit" size={30} color="white" />
-                         <Text style={styles.buttonText}>Write NFC Tag</Text>
-                         <Text style={styles.buttonDescription}>Program new NFC tag data</Text>
-                    </TouchableOpacity>
-               </View>
+               <Feature
+                    icon="nfc"
+                    title="Read NFC Tag"
+                    subtitle="Scan and verify tag credentials"
+                    color={colors.cyan}
+                    onPress={() => router.push('/read')}
+               />
+
+               <Feature
+                    icon="edit"
+                    title="Write NFC Tag"
+                    subtitle="Program new access credentials"
+                    color={colors.green}
+                    onPress={() => router.push('/write')}
+               />
+
+               {Platform.OS === 'android' && deviceInfo && (
+                    <>
+                         <Text style={styles.sectionTitle}>Device Information</Text>
+                         <InfoCard
+                              title="Device Specs"
+                              items={[
+                                   { label: "Model", value: deviceInfo.model },
+                                   { label: "Brand", value: deviceInfo.brand },
+                                   { label: "Android Version", value: deviceInfo.systemVersion },
+                                   { label: "API Level", value: deviceInfo.apiLevel.toString() },
+                              ]}
+                         />
+                    </>
+               )}
+
+               <Text style={styles.sectionTitle}>NFC Capabilities</Text>
+               <InfoCard
+                    title="NFC Status"
+                    items={[
+                         {
+                              label: "NFC Support",
+                              value: nfcStatus.isSupported ? "Available" : "Not Supported"
+                         },
+                         {
+                              label: "Technologies",
+                              value: nfcStatus.technologies.length > 0
+                                   ? nfcStatus.technologies.join(", ")
+                                   : "None detected"
+                         },
+                    ]}
+               />
 
                <View style={styles.footer}>
-                    <Text style={styles.footerText}>Place NFC tag near device when ready</Text>
+                    <View style={styles.statusIndicator}>
+                         <View style={[
+                              styles.statusDot,
+                              { backgroundColor: nfcStatus.isSupported ? colors.green : colors.red }
+                         ]} />
+                         <Text style={styles.statusText}>
+                              {nfcStatus.isSupported ? "NFC Ready" : "NFC Not Available"}
+                         </Text>
+                    </View>
                </View>
-          </View>
+          </ScrollView>
      );
 }
 
 const styles = StyleSheet.create({
      container: {
           flex: 1,
-          backgroundColor: '#f5f5f5',
-          padding: 20,
+          backgroundColor: colors.darkestBg,
+     },
+     contentContainer: {
+          padding: 16,
      },
      header: {
           alignItems: 'center',
-          marginTop: 60,
-          marginBottom: 40,
+          marginTop: 20,
+          marginBottom: 32,
+     },
+     logoContainer: {
+          width: 80,
+          height: 80,
+          borderRadius: 40,
+          backgroundColor: colors.normalBg,
+          justifyContent: 'center',
+          alignItems: 'center',
+          marginBottom: 16,
      },
      title: {
-          fontSize: 32,
+          fontSize: 28,
           fontWeight: 'bold',
-          color: '#333',
-          marginTop: 10,
+          color: colors.textPrimary,
+          marginBottom: 8,
      },
      subtitle: {
-          fontSize: 18,
-          color: '#666',
-          marginTop: 5,
+          fontSize: 16,
+          color: colors.textSecondary,
      },
-     buttonContainer: {
-          flex: 1,
-          justifyContent: 'center',
-          gap: 20,
-     },
-     button: {
-          padding: 20,
-          borderRadius: 12,
-          alignItems: 'center',
-          elevation: 3,
-          shadowColor: '#000',
-          shadowOffset: {
-               width: 0,
-               height: 2,
-          },
-          shadowOpacity: 0.25,
-          shadowRadius: 3.84,
-     },
-     readButton: {
-          backgroundColor: '#2196F3',
-     },
-     writeButton: {
-          backgroundColor: '#4CAF50',
-     },
-     buttonText: {
-          color: 'white',
+     sectionTitle: {
           fontSize: 20,
-          fontWeight: 'bold',
-          marginTop: 10,
+          fontWeight: '600',
+          color: colors.textPrimary,
+          marginBottom: 16,
+          marginTop: 24,
      },
-     buttonDescription: {
-          color: 'rgba(255, 255, 255, 0.8)',
+     featureCard: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: colors.normalBg,
+          padding: 16,
+          borderRadius: 16,
+          marginBottom: 12,
+     },
+     iconContainer: {
+          padding: 12,
+          borderRadius: 12,
+          marginRight: 16,
+     },
+     featureContent: {
+          flex: 1,
+     },
+     featureTitle: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: colors.textPrimary,
+          marginBottom: 4,
+     },
+     featureSubtitle: {
           fontSize: 14,
-          marginTop: 5,
+          color: colors.textSecondary,
+     },
+     infoCard: {
+          backgroundColor: colors.normalBg,
+          borderRadius: 16,
+          padding: 16,
+          marginBottom: 12,
+     },
+     infoCardTitle: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: colors.textPrimary,
+          marginBottom: 12,
+     },
+     infoRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: 'rgba(255,255,255,0.1)',
+     },
+     infoLabel: {
+          fontSize: 14,
+          color: colors.textSecondary,
+     },
+     infoValue: {
+          fontSize: 14,
+          color: colors.textPrimary,
+          fontWeight: '500',
      },
      footer: {
+          marginTop: 24,
+          marginBottom: 16,
           alignItems: 'center',
-          padding: 20,
      },
-     footerText: {
-          color: '#666',
-          fontSize: 16,
-     }
+     statusIndicator: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: colors.normalBg,
+          paddingVertical: 8,
+          paddingHorizontal: 16,
+          borderRadius: 20,
+     },
+     statusDot: {
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          marginRight: 8,
+     },
+     statusText: {
+          fontSize: 14,
+          color: colors.textSecondary,
+     },
 });

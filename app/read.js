@@ -1,202 +1,206 @@
 // app/read.js
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import React, { useState } from 'react';
-import NfcManager, { NfcTech } from 'react-native-nfc-manager';
-import { globalStyles } from '../styles/globalStyles';
+import { View, ScrollView, Animated, StyleSheet, TouchableOpacity, Text } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { MaterialIcons } from '@expo/vector-icons';
+import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
+import { colors } from '../styles/globalStyles';
+import { NfcScanIndicator } from '../components/NfcScanIndicator';
 
 export default function ReadNFC() {
      const [tagData, setTagData] = useState(null);
+     const [scanning, setScanning] = useState(false);
+     const fadeAnim = useRef(new Animated.Value(0)).current;
+     const slideAnim = useRef(new Animated.Value(30)).current;
 
-     const formatNdefRecord = (record) => {
-          const tnf = record.tnf;
-          const type = record.type ? new Uint8Array(record.type) : null;
-          const id = record.id ? new Uint8Array(record.id) : null;
-          const payload = record.payload ? new Uint8Array(record.payload) : null;
+     useEffect(() => {
+          Animated.parallel([
+               Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 800,
+                    useNativeDriver: true,
+               }),
+               Animated.timing(slideAnim, {
+                    toValue: 0,
+                    duration: 800,
+                    useNativeDriver: true,
+               }),
+          ]).start();
 
-          // Try to convert payload to text if possible
-          let payloadText = 'Unable to decode';
-          if (payload) {
-               try {
-                    // Skip first byte (language code length) for Text Records
-                    const payloadString = String.fromCharCode.apply(null, payload.slice(1));
-                    payloadText = decodeURIComponent(escape(payloadString));
-               } catch (e) {
-                    console.warn('Failed to decode payload', e);
-               }
+          // Cleanup NFC when component unmounts
+          return () => {
+               NfcManager.cancelTechnologyRequest();
+          };
+     }, []);
+
+     const parseNdefMessage = (message) => {
+          try {
+               if (!message || !message.length) return 'Empty message';
+
+               const record = message[0];
+               if (!record) return 'No records found';
+
+               // Skip the first byte (language code length) for Text Records
+               const payload = record.payload;
+               if (!payload || !payload.length) return 'Empty payload';
+
+               // Convert payload bytes to string, skipping first byte (language code length)
+               return String.fromCharCode.apply(null, payload.slice(1));
+          } catch (error) {
+               console.warn('Error parsing NDEF message:', error);
+               return 'Unable to parse message';
           }
-
-          return {
-               tnf: tnf || 'Not available',
-               type: type ? Array.from(type).join(',') : 'Not available',
-               id: id ? Array.from(id).join(',') : 'Not available',
-               payload: payload ? Array.from(payload).join(',') : 'Not available',
-               payloadAsText: payloadText
-          };
      };
 
-     const parseTagData = (tag) => {
-          if (!tag) return null;
-
-          let parsedData = {
-               basicInfo: {
-                    techTypes: tag.techTypes || [],
-                    maxSize: tag.maxSize || 'Not available',
-                    isWritable: tag.isWritable !== undefined ? tag.isWritable.toString() : 'Unknown',
-                    id: tag.id ? Array.from(new Uint8Array(tag.id)).map(b => b.toString(16).padStart(2, '0')).join(':') : 'Not available',
-                    type: tag.type || 'Not available'
-               },
-               ndefMessage: tag.ndefMessage ? tag.ndefMessage.map(formatNdefRecord) : [],
-               canMakeReadOnly: tag.canMakeReadOnly !== undefined ? tag.canMakeReadOnly.toString() : 'Unknown',
-               isWriteable: tag.isWriteable !== undefined ? tag.isWriteable.toString() : 'Unknown'
-          };
-
-          return parsedData;
-     };
-
-     const DataSection = ({ title, data }) => (
-          <View style={styles.section}>
-               <Text style={styles.sectionTitle}>{title}</Text>
-               {Object.entries(data).map(([key, value]) => (
-                    <View key={key} style={styles.dataRow}>
-                         <Text style={styles.dataLabel}>{key}:</Text>
-                         <Text style={styles.dataValue}>
-                              {Array.isArray(value) ? value.join(', ') : value.toString()}
-                         </Text>
-                    </View>
-               ))}
-          </View>
-     );
-
-     const NdefRecordView = ({ record, index }) => (
-          <View style={styles.ndefRecord}>
-               <Text style={styles.recordTitle}>Record {index + 1}</Text>
-               <View style={styles.dataRow}>
-                    <Text style={styles.dataLabel}>TNF:</Text>
-                    <Text style={styles.dataValue}>{record.tnf}</Text>
-               </View>
-               <View style={styles.dataRow}>
-                    <Text style={styles.dataLabel}>Type:</Text>
-                    <Text style={styles.dataValue}>{record.type}</Text>
-               </View>
-               <View style={styles.dataRow}>
-                    <Text style={styles.dataLabel}>ID:</Text>
-                    <Text style={styles.dataValue}>{record.id}</Text>
-               </View>
-               <View style={styles.dataRow}>
-                    <Text style={styles.dataLabel}>Payload:</Text>
-                    <Text style={styles.dataValue}>{record.payload}</Text>
-               </View>
-               <View style={styles.dataRow}>
-                    <Text style={styles.dataLabel}>Payload as Text:</Text>
-                    <Text style={styles.dataValue}>{record.payloadAsText}</Text>
-               </View>
-          </View>
-     );
-
-     async function readNdef() {
+     const readTag = async () => {
+          setScanning(true);
           try {
                await NfcManager.requestTechnology(NfcTech.Ndef);
                const tag = await NfcManager.getTag();
-               const parsedTag = parseTagData(tag);
-               setTagData(parsedTag);
+               setTagData(tag);
+
+               // Get NDEF message if available
+               if (tag) {
+                    try {
+                         const ndef = await NfcManager.ndefHandler.getNdefMessage();
+                         if (ndef) {
+                              setTagData(prevData => ({
+                                   ...prevData,
+                                   ndefMessage: ndef
+                              }));
+                         }
+                    } catch (ndefError) {
+                         console.warn('Error reading NDEF:', ndefError);
+                    }
+               }
           } catch (ex) {
-               console.warn('Oops!', ex);
-               setTagData(null);
+               console.warn('Scan failed:', ex);
           } finally {
+               setScanning(false);
                NfcManager.cancelTechnologyRequest();
           }
-     }
+     };
+
+     const InfoCard = ({ title, value, icon, color }) => (
+          <Animated.View
+               style={[
+                    styles.infoCard,
+                    { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }
+               ]}
+          >
+               <View style={[styles.iconContainer, { backgroundColor: color + '20' }]}>
+                    <MaterialIcons name={icon} size={24} color={color} />
+               </View>
+               <View style={styles.infoContent}>
+                    <Text style={styles.infoTitle}>{title}</Text>
+                    <Text style={styles.infoValue}>{value}</Text>
+               </View>
+          </Animated.View>
+     );
 
      return (
-          <View style={globalStyles.container}>
-               <TouchableOpacity style={globalStyles.button} onPress={readNdef}>
-                    <Text style={globalStyles.buttonText}>Scan NFC Tag</Text>
-               </TouchableOpacity>
+          <View style={styles.container}>
+               <ScrollView
+                    contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+               >
+                    <TouchableOpacity
+                         onPress={readTag}
+                         disabled={scanning}
+                         activeOpacity={0.8}
+                    >
+                         <NfcScanIndicator isScanning={scanning} type="read" />
+                    </TouchableOpacity>
 
-               {tagData && (
-                    <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-                         <DataSection title="Basic Information" data={tagData.basicInfo} />
+                    {tagData && (
+                         <Animated.View
+                              style={[
+                                   styles.dataContainer,
+                                   {
+                                        opacity: fadeAnim,
+                                        transform: [{ translateY: slideAnim }]
+                                   }
+                              ]}
+                         >
+                              <InfoCard
+                                   title="Tag ID"
+                                   value={tagData.id ? Buffer.from(tagData.id).toString('hex').toUpperCase() : 'N/A'}
+                                   icon="fingerprint"
+                                   color={colors.purple}
+                              />
 
-                         <View style={styles.section}>
-                              <Text style={styles.sectionTitle}>NDEF Message</Text>
-                              {tagData.ndefMessage.length > 0 ? (
-                                   tagData.ndefMessage.map((record, index) => (
-                                        <NdefRecordView key={index} record={record} index={index} />
-                                   ))
-                              ) : (
-                                   <Text style={styles.emptyMessage}>No NDEF messages found</Text>
+                              <InfoCard
+                                   title="Technology"
+                                   value={tagData.techTypes?.join(', ') || 'Unknown'}
+                                   icon="memory"
+                                   color={colors.cyan}
+                              />
+
+                              <InfoCard
+                                   title="Capacity"
+                                   value={`${tagData.maxSize || 0} bytes`}
+                                   icon="sd-storage"
+                                   color={colors.green}
+                              />
+
+                              {tagData.ndefMessage && (
+                                   <InfoCard
+                                        title="NDEF Message"
+                                        value={parseNdefMessage(tagData.ndefMessage)}
+                                        icon="message"
+                                        color={colors.yellow}
+                                   />
                               )}
-                         </View>
-
-                         <DataSection
-                              title="Additional Properties"
-                              data={{
-                                   canMakeReadOnly: tagData.canMakeReadOnly,
-                                   isWriteable: tagData.isWriteable
-                              }}
-                         />
-                    </ScrollView>
-               )}
+                         </Animated.View>
+                    )}
+               </ScrollView>
           </View>
      );
 }
 
 const styles = StyleSheet.create({
-     scrollView: {
+     container: {
           flex: 1,
-          width: '100%',
-          marginTop: 20,
+          backgroundColor: colors.darkestBg,
      },
      scrollContent: {
           padding: 16,
+          paddingTop: 8,
      },
-     section: {
-          backgroundColor: '#fff',
-          borderRadius: 8,
+     dataContainer: {
+          marginTop: 24,
+     },
+     infoCard: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: colors.normalBg,
           padding: 16,
-          marginBottom: 16,
+          borderRadius: 16,
+          marginBottom: 12,
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
+          shadowOffset: {
+               width: 0,
+               height: 2,
+          },
           shadowOpacity: 0.1,
           shadowRadius: 4,
           elevation: 3,
      },
-     sectionTitle: {
-          fontSize: 18,
-          fontWeight: 'bold',
-          marginBottom: 12,
-          color: '#2196F3',
-     },
-     dataRow: {
-          flexDirection: 'row',
-          marginBottom: 8,
-          flexWrap: 'wrap',
-     },
-     dataLabel: {
-          fontWeight: '600',
-          width: 120,
-          color: '#666',
-     },
-     dataValue: {
-          flex: 1,
-          color: '#333',
-     },
-     ndefRecord: {
-          backgroundColor: '#f5f5f5',
-          borderRadius: 4,
+     iconContainer: {
           padding: 12,
-          marginTop: 8,
+          borderRadius: 12,
+          marginRight: 16,
      },
-     recordTitle: {
+     infoContent: {
+          flex: 1,
+     },
+     infoTitle: {
+          fontSize: 14,
+          color: colors.textSecondary,
+          marginBottom: 4,
+     },
+     infoValue: {
           fontSize: 16,
-          fontWeight: '600',
-          marginBottom: 8,
-          color: '#2196F3',
-     },
-     emptyMessage: {
-          fontStyle: 'italic',
-          color: '#666',
-          textAlign: 'center',
-          paddingVertical: 12,
+          color: colors.textPrimary,
+          fontWeight: '500',
      },
 });
